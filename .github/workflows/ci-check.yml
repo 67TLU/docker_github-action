@@ -1,0 +1,94 @@
+name: Kiểm tra Backend (có MySQL) và Frontend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # ==========================================
+  # JOB 1: KIỂM TRA BACKEND KÈM MYSQL ẢO
+  # ==========================================
+  check-backend:
+    name: Kiểm tra Backend + MySQL
+    runs-on: ubuntu-latest
+
+    # 1. Bật một Container MySQL 8.0 chạy song song để test
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root_password_test
+          MYSQL_DATABASE: task_manager
+        ports:
+          - 3306:3306
+        # Kiểm tra sức khỏe: Đợi MySQL khởi động xong 100% mới chạy bước tiếp theo
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: 📥 1. Tải mã nguồn về máy ảo
+        uses: actions/checkout@v4
+
+      - name: 🗄️ 2. Nạp cấu trúc bảng từ database/init.sql vào MySQL ảo
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -u root -proot_password_test task_manager < database/init.sql
+
+      - name: ⚙️ 3. Cài đặt Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 📦 4. Cài đặt thư viện Backend
+        working-directory: ./backend
+        run: npm ci
+
+      - name: 🧪 5. Chạy thử npm run dev trong 10 giây
+        working-directory: ./backend
+        env:
+          NODE_ENV: development
+          PORT: 5000
+          # Phải dùng 127.0.0.1 thay vì localhost để tránh lỗi IPv6 trên Ubuntu
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root_password_test
+          DB_NAME: task_manager
+        run: |
+          timeout 10s npm run dev || [ $? -eq 124 ]
+
+  # ==========================================
+  # JOB 2: KIỂM TRA FRONTEND
+  # ==========================================
+  check-frontend:
+    name: Kiểm tra Frontend (React + Vite)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - name: 📥 1. Tải mã nguồn về máy ảo
+        uses: actions/checkout@v4
+
+      - name: ⚙️ 2. Cài đặt Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 📦 3. Cài đặt thư viện Frontend
+        run: npm ci
+
+      - name: 🔍 4. Kiểm tra lỗi cú pháp (Oxlint)
+        run: npx oxlint
+
+      - name: 🏗️ 5. Đóng gói thử bản Build (Vite)
+        run: npm run build
